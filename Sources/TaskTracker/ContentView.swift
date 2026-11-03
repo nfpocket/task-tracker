@@ -6,6 +6,7 @@ struct ContentView: View {
     let store: TaskStore
     let panel: PanelState
     let outline: TaskOutlineController
+    let menu: MenuPanel
 
     @Environment(\.undoManager) private var undoManager
     @State private var draft = ""
@@ -25,6 +26,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Divider()
             }
+            MenuSection(panel: menu)
             OutlineContainer(controller: outline)
             Divider()
             footer
@@ -39,6 +41,7 @@ struct ContentView: View {
     private func didOpen() {
         store.undoManager = undoManager
         outline.prepareForOpen()
+        menu.didOpen()
         addFieldFocused = true
     }
 
@@ -114,7 +117,9 @@ struct ContentView: View {
         let inProgress = store.list.tasks(in: .inProgress).count
         let todo = store.list.tasks(in: .todo).count
         let doneToday = store.list.completedCount(onSameDayAs: .now)
-        return "\(inProgress) in progress · \(todo) todo · \(doneToday) done today"
+        let tasks = "\(inProgress) in progress · \(todo) todo · \(doneToday) done today"
+        let checks = menu.file.openChecks
+        return checks == 0 ? tasks : "\(checks) to check · \(tasks)"
     }
 
     private func copyList() {
