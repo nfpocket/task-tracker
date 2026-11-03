@@ -2,6 +2,11 @@ import ServiceManagement
 import SwiftUI
 import TaskTrackerCore
 
+/// The popover's two tabs: the task list, and the menu of checks and ideas agents left.
+enum PopoverTab: String {
+    case tasks, menu
+}
+
 struct ContentView: View {
     let store: TaskStore
     let panel: PanelState
@@ -12,22 +17,30 @@ struct ContentView: View {
     @State private var draft = ""
     @FocusState private var addFieldFocused: Bool
     @State private var message: String?
+    @AppStorage("popoverTab") private var tab: PopoverTab = .tasks
 
     var body: some View {
         VStack(spacing: 0) {
-            addBar
+            tabBar
             Divider()
-            if let problem = store.problem {
-                Text(problem)
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            switch tab {
+            case .tasks:
+                addBar
                 Divider()
+                if let problem = store.problem {
+                    Text(problem)
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Divider()
+                }
+                OutlineContainer(controller: outline)
+            case .menu:
+                MenuView(panel: menu)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            MenuSection(panel: menu)
-            OutlineContainer(controller: outline)
             Divider()
             footer
         }
@@ -35,6 +48,13 @@ struct ContentView: View {
         .onAppear(perform: didOpen)
         .onChange(of: panel.openCount, didOpen)
         .onChange(of: outline.addFieldFocusRequests) { addFieldFocused = true }
+        .onChange(of: tab) {
+            // Back on the list: start fresh, as when the popover opens.
+            if tab == .tasks {
+                outline.prepareForOpen()
+                addFieldFocused = true
+            }
+        }
         .onExitCommand { panel.close() }
     }
 
@@ -42,7 +62,20 @@ struct ContentView: View {
         store.undoManager = undoManager
         outline.prepareForOpen()
         menu.didOpen()
-        addFieldFocused = true
+        if tab == .tasks { addFieldFocused = true }
+    }
+
+    // MARK: - Tabs
+
+    private var tabBar: some View {
+        Picker("", selection: $tab) {
+            Text("Tasks").tag(PopoverTab.tasks)
+            Text(verbatim: menu.openCount == 0 ? "Menu" : "Menu  \(menu.openCount)").tag(PopoverTab.menu)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Add
@@ -79,9 +112,8 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Text(message ?? summary)
+            footerText
                 .font(.caption)
-                .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer()
             Text(AppDelegate.hotKeyLabel)
@@ -91,6 +123,7 @@ struct ContentView: View {
             Menu {
                 Button("New Folder", action: outline.newFolder)
                     .keyboardShortcut("n", modifiers: [.command, .shift])
+                    .disabled(tab != .tasks)
                 Divider()
                 Button("Copy List as Text", action: copyList)
                 Button("Import from Clipboard", action: importClipboard)
@@ -113,13 +146,30 @@ struct ContentView: View {
         .padding(.vertical, 8)
     }
 
+    /// The list's counts, or on the Menu tab the menu's, with the last thing a button did.
+    @ViewBuilder private var footerText: some View {
+        if tab == .menu, let text = menu.message {
+            Text(verbatim: text)
+                .foregroundStyle(menu.messageIsError ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                .help(text)
+        } else {
+            Text(verbatim: message ?? (tab == .tasks ? summary : menuSummary))
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private var summary: String {
         let inProgress = store.list.tasks(in: .inProgress).count
         let todo = store.list.tasks(in: .todo).count
         let doneToday = store.list.completedCount(onSameDayAs: .now)
-        let tasks = "\(inProgress) in progress · \(todo) todo · \(doneToday) done today"
-        let checks = menu.file.openChecks
-        return checks == 0 ? tasks : "\(checks) to check · \(tasks)"
+        return "\(inProgress) in progress · \(todo) todo · \(doneToday) done today"
+    }
+
+    private var menuSummary: String {
+        let ideas = menu.file.openIdeas
+        var parts = ["\(menu.file.openChecks) to check", "\(ideas) \(ideas == 1 ? "idea" : "ideas")"]
+        if menu.problemsWaiting > 0 { parts.append("\(menu.problemsWaiting) waiting for a fix") }
+        return parts.joined(separator: " · ")
     }
 
     private func copyList() {

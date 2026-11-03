@@ -189,7 +189,9 @@ public struct MenuFile: Codable, Equatable, Sendable {
             }.map(\.element)
             return (pr, sorted)
         }
-        return groups.sorted { ($0.items.map(\.createdAt).max() ?? .distantPast) > ($1.items.map(\.createdAt).max() ?? .distantPast) }
+        // Ids count up, so the highest one is the newest item, even within the same second.
+        func newest(_ items: [MenuItem]) -> Int { items.compactMap { Int($0.id.dropFirst()) }.max() ?? 0 }
+        return groups.sorted { newest($0.items) > newest($1.items) }
     }
 
     public var openChecks: Int { items.filter { $0.kind == .check && $0.status == .open }.count }

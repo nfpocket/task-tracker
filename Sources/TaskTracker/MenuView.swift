@@ -1,122 +1,116 @@
 import SwiftUI
 import TaskTrackerCore
 
-/// The menu at the top of the popover: per PR, the checks and ideas an agent left for you.
-/// Hidden while there's nothing on it.
-struct MenuSection: View {
+/// The Menu tab: per PR, the checks and ideas an agent left for you.
+struct MenuView: View {
     @Bindable var panel: MenuPanel
-    @State private var contentHeight: CGFloat = 0
-
-    /// The task list below keeps the rest of the popover.
-    static let maxHeight: CGFloat = 290
 
     var body: some View {
         let groups = panel.groups
-        if !groups.isEmpty {
-            VStack(spacing: 0) {
-                header(open: groups.reduce(0) { $0 + $1.items.filter { $0.status == .open }.count })
-                if !panel.collapsed {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(groups, id: \.pr.id) { group in
-                                    PRGroup(panel: panel, pr: group.pr, items: group.items)
-                                }
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 8)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
-                        }
-                        .frame(height: min(max(contentHeight, 1), Self.maxHeight))
-                        .onChange(of: panel.selectedID) {
-                            guard let id = panel.selectedID else { return }
-                            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
+        if groups.isEmpty {
+            emptyState
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(groups, id: \.pr.id) { group in
+                            PRGroup(panel: panel, pr: group.pr, items: group.items)
                         }
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
                 }
-                if let message = panel.message {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(panel.messageIsError ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 6)
-                        .textSelection(.enabled)
+                .onChange(of: panel.selectedID) {
+                    guard let id = panel.selectedID else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
                 }
             }
-            Divider()
         }
     }
 
-    private func header(open: Int) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.15)) { panel.collapsed.toggle() }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(panel.collapsed ? 0 : 90))
-                    .frame(width: 10)
-                Image(systemName: "hourglass")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.orange)
-                Text("Menu")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(verbatim: "\(open)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                Spacer()
-            }
-            .contentShape(Rectangle())
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 26))
+                .foregroundStyle(.tertiary)
+            Text("Nothing to check")
+                .font(.system(size: 13, weight: .semibold))
+            Text("When an agent opens a PR, what it couldn’t check itself lands here.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .help(panel.collapsed ? "Show the menu" : "Hide the menu")
+        .padding(30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-/// One PR: its header, a banner when problems wait for a fix, and its items.
+/// One PR: a header that opens and closes it, a banner when problems wait for a fix, and its items.
 private struct PRGroup: View {
     @Bindable var panel: MenuPanel
     let pr: MenuPR
     let items: [MenuItem]
 
     var body: some View {
+        let expanded = panel.isExpanded(pr, items: items)
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.pull")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text(verbatim: "#\(pr.number)")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(verbatim: pr.title ?? pr.repo)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 4)
-                if let state = pr.state { StateChip(state: state) }
-            }
-            .padding(.leading, 18)
-            .padding(.trailing, 4)
-            .padding(.vertical, 3)
-            .help(pr.repo)
-            .onTapGesture {
-                if let url = pr.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(url) }
-            }
+            header(expanded: expanded)
 
             let problems = items.filter { $0.status == .problem }
             if !problems.isEmpty { fixBanner(count: problems.count) }
 
-            ForEach(items) { item in
-                ItemRow(panel: panel, pr: pr, item: item)
-                    .id(item.id)
+            if expanded {
+                ForEach(items) { item in
+                    ItemRow(panel: panel, pr: pr, item: item)
+                        .id(item.id)
+                }
             }
         }
+    }
+
+    private func header(expanded: Bool) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { panel.setExpanded(pr, items: items, !expanded) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .frame(width: 10)
+                    Image(systemName: "arrow.triangle.pull")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text(verbatim: "#\(pr.number)")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(verbatim: pr.title ?? pr.repo)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    if !expanded { Counts(items: items) }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Close PR #\(pr.number)" : "Open PR #\(pr.number)")
+
+            if let state = pr.state { StateChip(state: state) }
+            if let url = pr.url.flatMap(URL.init(string:)) {
+                Button { NSWorkspace.shared.open(url) } label: {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open PR #\(pr.number) on GitHub")
+            }
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
     }
 
     private func fixBanner(count: Int) -> some View {
@@ -139,6 +133,37 @@ private struct PRGroup: View {
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.orange.opacity(0.12)))
         .padding(.leading, 30)
         .padding(.vertical, 2)
+    }
+}
+
+/// What a closed PR still holds: open checks and ideas.
+private struct Counts: View {
+    let items: [MenuItem]
+
+    var body: some View {
+        let checks = items.filter { $0.kind == .check && $0.status == .open }.count
+        let ideas = items.filter { $0.kind == .idea && $0.status == .open }.count
+        HStack(spacing: 8) {
+            if checks > 0 { count(checks, "magnifyingglass", .cyan) }
+            if ideas > 0 { count(ideas, "lightbulb", .yellow) }
+            if checks == 0 && ideas == 0 {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .help("\(checks) to check, \(ideas) \(ideas == 1 ? "idea" : "ideas")")
+    }
+
+    private func count(_ value: Int, _ symbol: String, _ color: Color) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: symbol)
+                .font(.system(size: 10))
+                .foregroundStyle(color)
+            Text(verbatim: "\(value)")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

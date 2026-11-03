@@ -34,9 +34,10 @@ Drag to reorder or move between sections. Paste or drop images and links onto a 
 
 ## The menu
 
-While an agent builds something, the menu at the top of the list holds what you can do by hand in the
-meantime: the checks the agent couldn't verify itself, and the ideas it left out of scope. It only shows
-while something is on it.
+While an agent builds something, the **Menu** tab holds what you can do by hand in the meantime: the
+checks the agent couldn't verify itself, and the ideas it left out of scope, grouped by PR. Only the newest
+PR with something left to do is open; the others show as one line with their counts. A PR you open or close
+yourself stays that way.
 
 - **Agents fill it.** A Claude Code hook (below) notices `gh pr create` and tells the agent to add its
   checks and ideas with `menu add`. It also remembers the session, so a fix can go back to it.

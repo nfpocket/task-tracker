@@ -62,7 +62,8 @@ struct MenuTests {
         file.updateItem("m4") { $0.status = .works }
 
         let groups = file.visibleGroups()
-        #expect(groups.map(\.pr.number).sorted() == [1, 2])
+        // The PR with the newest item comes first.
+        #expect(groups.map(\.pr.number) == [2, 1])
         let first = groups.first { $0.pr.number == 1 }!
         // Checks come before ideas.
         #expect(first.items.map(\.text) == ["a check", "an idea"])
