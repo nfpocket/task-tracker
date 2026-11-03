@@ -34,15 +34,18 @@ Drag to reorder or move between sections. Paste or drop images and links onto a 
 
 ## The menu
 
-While an agent builds something, the menu at the top of the list holds what you can do by hand in the
-meantime: the checks the agent couldn't verify itself, and the ideas it left out of scope. It only shows
-while something is on it.
+While an agent builds something, the **Menu** tab holds what you can do by hand in the meantime: the
+checks the agent couldn't verify itself, and the ideas it left out of scope, grouped by PR. Only the newest
+PR with something left to do is expanded; the others show as one line with their counts. A PR you expand or
+collapse yourself stays that way, and its header stays at the top while you scroll through its items.
 
 - **Agents fill it.** A Claude Code hook (below) notices `gh pr create` and tells the agent to add its
   checks and ideas with `menu add`. It also remembers the session, so a fix can go back to it.
 - **You decide each item.** A check: **Works**, or **Problem…**, which becomes a comment on the PR while
   it's open (the fix lands in that PR) and a new issue once it's merged. An idea: **Make issue**,
-  **Later** or **No**.
+  **Later** or **Dismiss**. Right-click an item for all of these, plus **Dismiss** and **Delete** for
+  checks too; right-click a PR to delete everything on it. Dismissed items are remembered so they aren't
+  proposed again, deleted ones are gone. ⌘Z takes back a status change or a delete.
 - **Fix in its session** sends the problems on a PR to the session that built it, in Ghostty: typed into
   its tab if it's still open, resumed in a new tab if not. The agent fixes them and puts each check back
   with `menu reopen`.

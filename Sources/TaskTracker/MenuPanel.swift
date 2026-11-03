@@ -18,20 +18,57 @@ final class MenuPanel {
     private(set) var busy: Set<String> = []
     private(set) var message: String?
     private(set) var messageIsError = false
-    var collapsed: Bool {
-        didSet { UserDefaults.standard.set(collapsed, forKey: "menuCollapsed") }
+    /// PRs you opened or closed by hand, by `MenuPR.id`. The others follow `isExpanded`'s default.
+    private(set) var expandedByHand: [String: Bool] {
+        didSet { UserDefaults.standard.set(expandedByHand, forKey: Self.expandedKey) }
     }
 
     @ObservationIgnored let actions: MenuActions
+    /// The popover's: ⌘Z takes back a status change or a delete.
+    @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored private var watcher: DispatchSourceFileSystemObject?
     @ObservationIgnored private var messageTask: Task<Void, Never>?
 
     init(actions: MenuActions = MenuActions()) {
         self.actions = actions
-        self.collapsed = UserDefaults.standard.bool(forKey: "menuCollapsed")
+        self.expandedByHand = UserDefaults.standard.dictionary(forKey: Self.expandedKey) as? [String: Bool] ?? [:]
     }
 
-    var groups: [(pr: MenuPR, items: [MenuItem])] { file.visibleGroups() }
+    private static let expandedKey = "menuExpandedPRs"
+
+    /// PRs with something left to do first, newest first; then the ones you're done with.
+    var groups: [(pr: MenuPR, items: [MenuItem])] {
+        let all = file.visibleGroups()
+        return all.filter { Self.hasWork($0.items) } + all.filter { !Self.hasWork($0.items) }
+    }
+
+    static func hasWork(_ items: [MenuItem]) -> Bool {
+        items.contains { !$0.status.isSettled }
+    }
+
+    var openCount: Int { file.openChecks + file.openIdeas }
+    var problemsWaiting: Int { file.items.filter { $0.status == .problem }.count }
+
+    // MARK: - Opening and closing PRs
+
+    /// Unless you opened or closed it yourself, only the newest PR with work left is open, so a
+    /// long menu reads as one line per PR. A PR also stays open while an item in it is selected.
+    func isExpanded(_ pr: MenuPR, items: [MenuItem]) -> Bool {
+        if let selectedID, items.contains(where: { $0.id == selectedID }) { return true }
+        if let byHand = expandedByHand[pr.id] { return byHand }
+        return groups.first(where: { Self.hasWork($0.items) })?.pr.id == pr.id
+    }
+
+    func setExpanded(_ pr: MenuPR, items: [MenuItem], _ expanded: Bool) {
+        expandedByHand[pr.id] = expanded
+        if !expanded, let selectedID, items.contains(where: { $0.id == selectedID }) {
+            self.selectedID = nil
+            reportingID = nil
+        }
+        // Forget PRs that left the menu.
+        let shown = Set(file.prs.map(\.id))
+        expandedByHand = expandedByHand.filter { shown.contains($0.key) }
+    }
 
     /// Loads the file and reloads it whenever something in its folder changes.
     func start() {
@@ -80,12 +117,71 @@ final class MenuPanel {
 
     // MARK: - Deciding
 
+    /// Works, Later, Dismiss, back to open. Local, so it happens at once and ⌘Z takes it back.
     func setStatus(_ item: MenuItem, _ status: MenuItemStatus) {
-        run(item.id) { actions in
-            try actions.setStatus(item.id, to: status)
-            return nil
+        if selectedID == item.id {
+            selectedID = nil
+            reportingID = nil
         }
-        selectedID = nil
+        apply(status, to: item.id)
+    }
+
+    private func apply(_ status: MenuItemStatus, to id: String) {
+        guard let before = file.item(id)?.status, before != status else { return }
+        do {
+            try actions.setStatus(id, to: status)
+        } catch {
+            return flash(error.localizedDescription, isError: true)
+        }
+        reload()
+        registerUndo(Self.actionName(status)) { $0.apply(before, to: id) }
+    }
+
+    /// Takes items off the menu for good. ⌘Z puts them back.
+    func delete(_ items: [MenuItem]) {
+        let ids = items.map(\.id)
+        if let selectedID, ids.contains(selectedID) {
+            self.selectedID = nil
+            reportingID = nil
+        }
+        do {
+            let removal = try actions.delete(ids)
+            reload()
+            registerUndo(ids.count == 1 ? "Delete" : "Delete \(ids.count) Items") { $0.restore(removal) }
+            flash(ids.count == 1 ? "Deleted · ⌘Z to undo" : "Deleted \(ids.count) items · ⌘Z to undo", isError: false)
+        } catch {
+            flash(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func restore(_ removal: MenuRemoval) {
+        do {
+            try actions.restore(removal)
+            reload()
+            registerUndo(removal.items.count == 1 ? "Delete" : "Delete \(removal.items.count) Items") { panel in
+                panel.delete(removal.items)
+            }
+        } catch {
+            flash(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func registerUndo(_ name: String, _ body: @escaping @MainActor (MenuPanel) -> Void) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { panel in
+            MainActor.assumeIsolated { body(panel) }
+        }
+        undoManager.setActionName(name)
+    }
+
+    private static func actionName(_ status: MenuItemStatus) -> String {
+        switch status {
+        case .works: "Works"
+        case .later: "Later"
+        case .dismissed: "Dismiss"
+        case .open: "Back to Open"
+        default: "Change"
+        }
     }
 
     func beginProblem(_ item: MenuItem) {

@@ -62,6 +62,20 @@ public struct MenuActions: Sendable {
         }
     }
 
+    /// Takes items off the menu for good (see `MenuFile.remove`).
+    @discardableResult
+    public func delete(_ ids: [String]) throws -> MenuRemoval {
+        try store.update { file in
+            let removal = file.remove(Set(ids))
+            guard !removal.items.isEmpty else { throw MenuError("No item \(ids.joined(separator: ", ")) on the menu.") }
+            return removal
+        }
+    }
+
+    public func restore(_ removal: MenuRemoval) throws {
+        try store.update { $0.restore(removal) }
+    }
+
     /// Puts a check back after a fix: "fixed in 4e1a2b".
     @discardableResult
     public func reopen(_ id: String, note: String?) throws -> MenuItem {

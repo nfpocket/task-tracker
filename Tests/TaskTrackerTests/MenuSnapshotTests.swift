@@ -55,32 +55,70 @@ struct MenuSnapshotTests {
             }),
             ("idea", { $0.selectedID = "m5" }),
         ]
+        let out = URL(fileURLWithPath: folder)
+        UserDefaults.standard.removeObject(forKey: "menuExpandedPRs")
         for (name, setUp) in states {
             for dark in [true, false] {
                 let panel = MenuPanel(actions: actions)
-                panel.collapsed = false
                 panel.reload()
                 setUp(panel)
-                try render(panel, to: URL(fileURLWithPath: folder).appending(path: "menu-\(name)-\(dark ? "dark" : "light").png"), dark: dark)
+                let view = MenuView(panel: panel)
+                    .frame(width: 420, height: 540)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                let hosting = host(view, size: CGSize(width: 420, height: 540), dark: dark)
+                try capture(hosting, to: out.appending(path: "menu-\(name)-\(dark ? "dark" : "light").png"))
             }
         }
+
+        // Scrolled into a PR: its header stays pinned at the top.
+        let scrolledPanel = MenuPanel(actions: actions)
+        scrolledPanel.reload()
+        scrolledPanel.selectedID = "m2"
+        let scrolled = host(
+            MenuView(panel: scrolledPanel).frame(width: 420, height: 220).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 420, height: 220), dark: true
+        )
+        for _ in 0..<3 {
+            scrolled.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        let scrollView = try #require(Self.firstScrollView(in: scrolled))
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 160))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        try capture(scrolled, to: out.appending(path: "menu-scrolled-dark.png"))
+
+        // The whole popover, switching tabs back and forth: the task list has to come back.
+        let tasks = TaskStore(fileURL: directory.appending(path: "tasks.json"))
+        tasks.add("Write the release notes\nPick a header image")
+        let panel = MenuPanel(actions: actions)
+        panel.reload()
+        let content = ContentView(store: tasks, panel: PanelState(), outline: TaskOutlineController(store: tasks), menu: panel)
+        let hosting = host(content.background(Color(nsColor: .windowBackgroundColor)), size: CGSize(width: 420, height: 620), dark: true)
+        for (index, tab) in ["menu", "tasks", "menu", "tasks"].enumerated() {
+            UserDefaults.standard.set(tab, forKey: "popoverTab")
+            try capture(hosting, to: out.appending(path: "popover-\(index + 1)-\(tab).png"))
+        }
+        UserDefaults.standard.removeObject(forKey: "popoverTab")
     }
 
-    private func render(_ panel: MenuPanel, to url: URL, dark: Bool) throws {
-        let size = CGSize(width: 420, height: 420)
-        let view = VStack(spacing: 0) {
-            MenuSection(panel: panel)
-            Spacer(minLength: 0)
-        }
-        .frame(width: size.width, height: size.height)
-        .background(Color(nsColor: .windowBackgroundColor))
-
-        let hosting = NSHostingView(rootView: view)
+    private func host(_ view: some View, size: CGSize, dark: Bool) -> NSHostingView<AnyView> {
+        let hosting = NSHostingView(rootView: AnyView(view))
         hosting.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: hosting.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentView = hosting
-        // Two passes: the scroll area takes its height from what it measured in the first.
+        return hosting
+    }
+
+    private static func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scrollView = view as? NSScrollView { return scrollView }
+        for subview in view.subviews {
+            if let found = firstScrollView(in: subview) { return found }
+        }
+        return nil
+    }
+
+    private func capture(_ hosting: NSView, to url: URL) throws {
         for _ in 0..<3 {
             hosting.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))

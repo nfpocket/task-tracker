@@ -1,122 +1,156 @@
+import AppKit
 import SwiftUI
 import TaskTrackerCore
 
-/// The menu at the top of the popover: per PR, the checks and ideas an agent left for you.
-/// Hidden while there's nothing on it.
-struct MenuSection: View {
+/// The Menu tab: per PR, the checks and ideas an agent left for you. A PR's header stays at the
+/// top while you scroll through its items.
+struct MenuView: View {
     @Bindable var panel: MenuPanel
-    @State private var contentHeight: CGFloat = 0
-
-    /// The task list below keeps the rest of the popover.
-    static let maxHeight: CGFloat = 290
 
     var body: some View {
         let groups = panel.groups
-        if !groups.isEmpty {
-            VStack(spacing: 0) {
-                header(open: groups.reduce(0) { $0 + $1.items.filter { $0.status == .open }.count })
-                if !panel.collapsed {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(groups, id: \.pr.id) { group in
-                                    PRGroup(panel: panel, pr: group.pr, items: group.items)
-                                }
+        if groups.isEmpty {
+            emptyState
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        ForEach(groups, id: \.pr.id) { group in
+                            let expanded = panel.isExpanded(group.pr, items: group.items)
+                            Section {
+                                PRBody(panel: panel, pr: group.pr, items: group.items, expanded: expanded)
+                            } header: {
+                                PRHeader(panel: panel, pr: group.pr, items: group.items, expanded: expanded)
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.bottom, 8)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
-                        }
-                        .frame(height: min(max(contentHeight, 1), Self.maxHeight))
-                        .onChange(of: panel.selectedID) {
-                            guard let id = panel.selectedID else { return }
-                            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
                         }
                     }
+                    .padding(.bottom, 8)
                 }
-                if let message = panel.message {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(panel.messageIsError ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 6)
-                        .textSelection(.enabled)
+                .onChange(of: panel.selectedID) {
+                    guard let id = panel.selectedID else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) }
                 }
             }
-            Divider()
         }
     }
 
-    private func header(open: Int) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.15)) { panel.collapsed.toggle() }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(panel.collapsed ? 0 : 90))
-                    .frame(width: 10)
-                Image(systemName: "hourglass")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.orange)
-                Text("Menu")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(verbatim: "\(open)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                Spacer()
-            }
-            .contentShape(Rectangle())
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 26))
+                .foregroundStyle(.tertiary)
+            Text("Nothing to check")
+                .font(.system(size: 13, weight: .semibold))
+            Text("When an agent opens a PR, what it couldn’t check itself lands here.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
-        .help(panel.collapsed ? "Show the menu" : "Hide the menu")
+        .padding(30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-/// One PR: its header, a banner when problems wait for a fix, and its items.
-private struct PRGroup: View {
+/// A PR's line: expands and collapses it, and stays pinned at the top while its items scroll.
+private struct PRHeader: View {
     @Bindable var panel: MenuPanel
     let pr: MenuPR
     let items: [MenuItem]
+    let expanded: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: toggle) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .frame(width: 10)
+                    Image(systemName: "arrow.triangle.pull")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Text(verbatim: "#\(pr.number)")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(verbatim: pr.title ?? pr.repo)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    if !expanded { Counts(items: items) }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Collapse #\(pr.number)" : "Expand #\(pr.number)")
+
+            if let state = pr.state { StateChip(state: state) }
+            if let url {
+                Button { NSWorkspace.shared.open(url) } label: {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open #\(pr.number) on GitHub")
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 12)
+        .padding(.vertical, 6)
+        .background(HeaderBackground())
+        .contextMenu {
+            Button(expanded ? "Collapse" : "Expand", action: toggle)
+            if let url {
+                Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+            }
+            Divider()
+            Button(items.count == 1 ? "Delete 1 Item" : "Delete \(items.count) Items", role: .destructive) {
+                panel.delete(items)
+            }
+        }
+    }
+
+    private var url: URL? { pr.url.flatMap(URL.init(string:)) }
+
+    private func toggle() {
+        withAnimation(.easeOut(duration: 0.15)) { panel.setExpanded(pr, items: items, !expanded) }
+    }
+}
+
+/// What scrolls under a pinned header shows through blurred, like a list's section header.
+private struct HeaderBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .headerView
+        view.blendingMode = .withinWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// Under a PR's header: the banner when problems wait for a fix, and its items when expanded.
+private struct PRBody: View {
+    @Bindable var panel: MenuPanel
+    let pr: MenuPR
+    let items: [MenuItem]
+    let expanded: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.triangle.pull")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Text(verbatim: "#\(pr.number)")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(verbatim: pr.title ?? pr.repo)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 4)
-                if let state = pr.state { StateChip(state: state) }
-            }
-            .padding(.leading, 18)
-            .padding(.trailing, 4)
-            .padding(.vertical, 3)
-            .help(pr.repo)
-            .onTapGesture {
-                if let url = pr.url.flatMap(URL.init(string:)) { NSWorkspace.shared.open(url) }
-            }
-
             let problems = items.filter { $0.status == .problem }
             if !problems.isEmpty { fixBanner(count: problems.count) }
-
-            ForEach(items) { item in
-                ItemRow(panel: panel, pr: pr, item: item)
-                    .id(item.id)
+            if expanded {
+                ForEach(items) { item in
+                    ItemRow(panel: panel, pr: pr, item: item)
+                        .id(item.id)
+                }
             }
         }
+        .padding(.bottom, 4)
     }
 
     private func fixBanner(count: Int) -> some View {
@@ -137,8 +171,40 @@ private struct PRGroup: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.orange.opacity(0.12)))
-        .padding(.leading, 30)
+        .padding(.leading, 38)
+        .padding(.trailing, 8)
         .padding(.vertical, 2)
+    }
+}
+
+/// What a closed PR still holds: open checks and ideas.
+private struct Counts: View {
+    let items: [MenuItem]
+
+    var body: some View {
+        let checks = items.filter { $0.kind == .check && $0.status == .open }.count
+        let ideas = items.filter { $0.kind == .idea && $0.status == .open }.count
+        HStack(spacing: 8) {
+            if checks > 0 { count(checks, "magnifyingglass", .cyan) }
+            if ideas > 0 { count(ideas, "lightbulb", .yellow) }
+            if checks == 0 && ideas == 0 {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .help("\(checks) to check, \(ideas) \(ideas == 1 ? "idea" : "ideas")")
+    }
+
+    private func count(_ value: Int, _ symbol: String, _ color: Color) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: symbol)
+                .font(.system(size: 10))
+                .foregroundStyle(color)
+            Text(verbatim: "\(value)")
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -190,6 +256,38 @@ private struct ItemRow: View {
             }
         }
         .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.primary.opacity(0.08) : .clear))
+        .padding(.horizontal, 8)
+        .contextMenu { contextMenu }
+    }
+
+    /// Right-click: the same decisions as the buttons, plus Dismiss and Delete for every item.
+    @ViewBuilder private var contextMenu: some View {
+        switch item.kind {
+        case .check:
+            if item.openURL != nil {
+                Button("Open") { panel.open(item) }
+                Divider()
+            }
+            Button("Works") { panel.setStatus(item, .works) }
+                .disabled(item.status == .works)
+            Button("Problem…") { panel.beginProblem(item) }
+        case .idea:
+            Button("Make Issue") { panel.makeIssue(item) }
+                .disabled(item.status == .issue)
+            Button("Later") { panel.setStatus(item, .later) }
+                .disabled(item.status == .later)
+        }
+        Button("Dismiss") { panel.setStatus(item, .dismissed) }
+            .disabled(item.status == .dismissed)
+        if [.works, .issue, .later, .dismissed].contains(item.status) {
+            Button("Back to Open") { panel.setStatus(item, .open) }
+        }
+        if item.link != nil {
+            Divider()
+            Button(item.status == .issue ? "View Issue" : "View Comment") { panel.openLink(item) }
+        }
+        Divider()
+        Button("Delete", role: .destructive) { panel.delete([item]) }
     }
 
     private var row: some View {
@@ -282,13 +380,19 @@ private struct ItemRow: View {
                 case .idea:
                     Button("Make issue") { panel.makeIssue(item) }.buttonStyle(.borderedProminent)
                     Button("Later") { panel.setStatus(item, .later) }
-                    Button("No") { panel.setStatus(item, .dismissed) }
+                    Button("Dismiss") { panel.setStatus(item, .dismissed) }
                 }
+                Spacer(minLength: 4)
                 if item.link != nil {
-                    Spacer(minLength: 4)
                     Button(item.status == .issue ? "View issue" : "View comment") { panel.openLink(item) }
                         .buttonStyle(.link)
                 }
+                Button { panel.delete([item]) } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Delete (⌘Z brings it back)")
             }
             .controlSize(.small)
             .disabled(panel.isBusy(item.id))

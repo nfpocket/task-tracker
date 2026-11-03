@@ -51,6 +51,32 @@ struct MenuTests {
         #expect(reopened.note == "fixed in 4e1a2b")
     }
 
+    @Test func deletesForGoodAndRestoresInPlace() throws {
+        let actions = MenuActions(store: store)
+        _ = try actions.add(repo: repo, pr: 1, kind: .check, text: "first")
+        _ = try actions.add(repo: repo, pr: 1, kind: .check, text: "second")
+        _ = try actions.add(repo: repo, pr: 2, kind: .idea, text: "only one on PR 2")
+
+        let removal = try actions.delete(["m1", "m3"])
+        #expect(removal.items.map(\.id) == ["m1", "m3"])
+        // PR 2 had nothing else on it, so it goes too; PR 1 keeps m2.
+        #expect(removal.prs.map(\.number) == [2])
+        var file = try store.read()
+        #expect(file.items.map(\.id) == ["m2"])
+        #expect(file.prs.map(\.number) == [1])
+        // Unlike dismissing, a deleted text may be proposed again.
+        guard case .added = try actions.add(repo: repo, pr: 2, kind: .idea, text: "only one on PR 2") else {
+            Issue.record("a deleted item blocked the same text"); return
+        }
+        _ = try actions.delete(["m4"])
+
+        try actions.restore(removal)
+        file = try store.read()
+        #expect(file.visibleGroups().first { $0.pr.number == 1 }?.items.map(\.id) == ["m1", "m2"])
+        #expect(file.pr(repo, 2) != nil)
+        #expect(throws: MenuError.self) { try actions.delete(["m99"]) }
+    }
+
     @Test func showsOpenItemsAndRecentlySettledOnes() {
         var file = MenuFile()
         let old = Date.now.addingTimeInterval(-24 * 3600)
@@ -62,7 +88,8 @@ struct MenuTests {
         file.updateItem("m4") { $0.status = .works }
 
         let groups = file.visibleGroups()
-        #expect(groups.map(\.pr.number).sorted() == [1, 2])
+        // The PR with the newest item comes first.
+        #expect(groups.map(\.pr.number) == [2, 1])
         let first = groups.first { $0.pr.number == 1 }!
         // Checks come before ideas.
         #expect(first.items.map(\.text) == ["a check", "an idea"])
