@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let store = TaskStore(fileURL: TaskStore.defaultFileURL)
     private let panel = PanelState()
+    private let menu = MenuPanel()
     private lazy var outline = TaskOutlineController(store: store)
     private lazy var reminders = Reminders(store: store, center: Reminders.notificationCenter)
     private let popover = NSPopover()
@@ -37,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.action = #selector(togglePopover)
         statusItem = item
 
-        let content = NSHostingController(rootView: ContentView(store: store, panel: panel, outline: outline))
+        let content = NSHostingController(rootView: ContentView(store: store, panel: panel, outline: outline, menu: menu))
         content.sizingOptions = .preferredContentSize
         popover.contentViewController = content
         popover.behavior = .transient
@@ -45,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         outline.onCancel = panel.close
         reminders.showTask = { [weak self] id in self?.show(id) }
         reminders.start()
+        menu.start()
 
         hotKey = HotKey(keyCode: kVK_ANSI_T, modifiers: controlKey | optionKey) { [weak self] in
             self?.togglePopover()

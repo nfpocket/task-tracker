@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds "build/Task Tracker.app". Pass --install to copy it to /Applications and launch it.
+# Builds "build/Task Tracker.app" and the `menu` command. Pass --install to copy the app to
+# /Applications and launch it, and the command to ~/.local/bin/menu.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,6 +10,7 @@ BUNDLE_ID="local.TaskTracker"
 VERSION="1.0"
 
 swift build -c release --product "$EXECUTABLE"
+swift build -c release --product menu
 BIN_DIR="$(swift build -c release --show-bin-path)"
 
 APP="build/$APP_NAME.app"
@@ -31,6 +33,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key><string>Task Tracker opens Claude Code in Ghostty to fix the problems you report on the menu.</string>
 </dict>
 </plist>
 PLIST
@@ -44,4 +47,7 @@ if [[ "${1:-}" == "--install" ]]; then
     cp -R "$APP" /Applications/
     open "/Applications/$APP_NAME.app"
     echo "Installed and launched /Applications/$APP_NAME.app"
+    mkdir -p "$HOME/.local/bin"
+    cp "$BIN_DIR/menu" "$HOME/.local/bin/menu"
+    echo "Installed $HOME/.local/bin/menu"
 fi
