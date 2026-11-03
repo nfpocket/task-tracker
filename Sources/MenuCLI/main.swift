@@ -18,7 +18,9 @@ Deciding (what the app's buttons do):
                                    open PR: a comment there, fixed in that PR
                                    merged or closed PR: a new issue
   menu issue <id>                  an idea becomes an issue
-  menu later <id> | menu no <id>
+  menu later <id> | menu dismiss <id>
+                                   dismissed items are kept, so they aren't proposed again
+  menu delete <id>…                take items off the menu for good
   menu fix <pr> [--repo owner/name]
                                    send the problems on a PR to the session that built it
 
@@ -153,9 +155,15 @@ func run(_ raw: [String]) throws {
     case "later":
         let item = try actions.setStatus(try args.at(1, "the item id"), to: .later)
         print("\(item.id): later")
-    case "no":
+    case "dismiss", "no":
         let item = try actions.setStatus(try args.at(1, "the item id"), to: .dismissed)
         print("\(item.id): dismissed")
+
+    case "delete":
+        let ids = Array(args.positional.dropFirst())
+        guard !ids.isEmpty else { throw MenuError("Missing the item id. See `menu help`.") }
+        let removal = try actions.delete(ids)
+        print("deleted \(removal.items.map(\.id).joined(separator: ", "))")
 
     case "reopen":
         let item = try actions.reopen(try args.at(1, "the item id"), note: args.options["note"])

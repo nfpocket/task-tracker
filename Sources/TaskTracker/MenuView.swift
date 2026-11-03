@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 import TaskTrackerCore
 
-/// The Menu tab: per PR, the checks and ideas an agent left for you.
+/// The Menu tab: per PR, the checks and ideas an agent left for you. A PR's header stays at the
+/// top while you scroll through its items.
 struct MenuView: View {
     @Bindable var panel: MenuPanel
 
@@ -12,13 +14,17 @@ struct MenuView: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         ForEach(groups, id: \.pr.id) { group in
-                            PRGroup(panel: panel, pr: group.pr, items: group.items)
+                            let expanded = panel.isExpanded(group.pr, items: group.items)
+                            Section {
+                                PRBody(panel: panel, pr: group.pr, items: group.items, expanded: expanded)
+                            } header: {
+                                PRHeader(panel: panel, pr: group.pr, items: group.items, expanded: expanded)
+                            }
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 8)
+                    .padding(.bottom, 8)
                 }
                 .onChange(of: panel.selectedID) {
                     guard let id = panel.selectedID else { return }
@@ -45,34 +51,16 @@ struct MenuView: View {
     }
 }
 
-/// One PR: a header that opens and closes it, a banner when problems wait for a fix, and its items.
-private struct PRGroup: View {
+/// A PR's line: expands and collapses it, and stays pinned at the top while its items scroll.
+private struct PRHeader: View {
     @Bindable var panel: MenuPanel
     let pr: MenuPR
     let items: [MenuItem]
+    let expanded: Bool
 
     var body: some View {
-        let expanded = panel.isExpanded(pr, items: items)
-        VStack(alignment: .leading, spacing: 2) {
-            header(expanded: expanded)
-
-            let problems = items.filter { $0.status == .problem }
-            if !problems.isEmpty { fixBanner(count: problems.count) }
-
-            if expanded {
-                ForEach(items) { item in
-                    ItemRow(panel: panel, pr: pr, item: item)
-                        .id(item.id)
-                }
-            }
-        }
-    }
-
-    private func header(expanded: Bool) -> some View {
         HStack(spacing: 6) {
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) { panel.setExpanded(pr, items: items, !expanded) }
-            } label: {
+            Button(action: toggle) {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
@@ -95,22 +83,74 @@ private struct PRGroup: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(expanded ? "Close PR #\(pr.number)" : "Open PR #\(pr.number)")
+            .help(expanded ? "Collapse #\(pr.number)" : "Expand #\(pr.number)")
 
             if let state = pr.state { StateChip(state: state) }
-            if let url = pr.url.flatMap(URL.init(string:)) {
+            if let url {
                 Button { NSWorkspace.shared.open(url) } label: {
                     Image(systemName: "arrow.up.right.square")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Open PR #\(pr.number) on GitHub")
+                .help("Open #\(pr.number) on GitHub")
             }
         }
-        .padding(.leading, 6)
-        .padding(.trailing, 4)
-        .padding(.vertical, 4)
+        .padding(.leading, 14)
+        .padding(.trailing, 12)
+        .padding(.vertical, 6)
+        .background(HeaderBackground())
+        .contextMenu {
+            Button(expanded ? "Collapse" : "Expand", action: toggle)
+            if let url {
+                Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+            }
+            Divider()
+            Button(items.count == 1 ? "Delete 1 Item" : "Delete \(items.count) Items", role: .destructive) {
+                panel.delete(items)
+            }
+        }
+    }
+
+    private var url: URL? { pr.url.flatMap(URL.init(string:)) }
+
+    private func toggle() {
+        withAnimation(.easeOut(duration: 0.15)) { panel.setExpanded(pr, items: items, !expanded) }
+    }
+}
+
+/// What scrolls under a pinned header shows through blurred, like a list's section header.
+private struct HeaderBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .headerView
+        view.blendingMode = .withinWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
+/// Under a PR's header: the banner when problems wait for a fix, and its items when expanded.
+private struct PRBody: View {
+    @Bindable var panel: MenuPanel
+    let pr: MenuPR
+    let items: [MenuItem]
+    let expanded: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            let problems = items.filter { $0.status == .problem }
+            if !problems.isEmpty { fixBanner(count: problems.count) }
+            if expanded {
+                ForEach(items) { item in
+                    ItemRow(panel: panel, pr: pr, item: item)
+                        .id(item.id)
+                }
+            }
+        }
+        .padding(.bottom, 4)
     }
 
     private func fixBanner(count: Int) -> some View {
@@ -131,7 +171,8 @@ private struct PRGroup: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.orange.opacity(0.12)))
-        .padding(.leading, 30)
+        .padding(.leading, 38)
+        .padding(.trailing, 8)
         .padding(.vertical, 2)
     }
 }
@@ -215,6 +256,38 @@ private struct ItemRow: View {
             }
         }
         .background(RoundedRectangle(cornerRadius: 7).fill(selected ? Color.primary.opacity(0.08) : .clear))
+        .padding(.horizontal, 8)
+        .contextMenu { contextMenu }
+    }
+
+    /// Right-click: the same decisions as the buttons, plus Dismiss and Delete for every item.
+    @ViewBuilder private var contextMenu: some View {
+        switch item.kind {
+        case .check:
+            if item.openURL != nil {
+                Button("Open") { panel.open(item) }
+                Divider()
+            }
+            Button("Works") { panel.setStatus(item, .works) }
+                .disabled(item.status == .works)
+            Button("Problem…") { panel.beginProblem(item) }
+        case .idea:
+            Button("Make Issue") { panel.makeIssue(item) }
+                .disabled(item.status == .issue)
+            Button("Later") { panel.setStatus(item, .later) }
+                .disabled(item.status == .later)
+        }
+        Button("Dismiss") { panel.setStatus(item, .dismissed) }
+            .disabled(item.status == .dismissed)
+        if [.works, .issue, .later, .dismissed].contains(item.status) {
+            Button("Back to Open") { panel.setStatus(item, .open) }
+        }
+        if item.link != nil {
+            Divider()
+            Button(item.status == .issue ? "View Issue" : "View Comment") { panel.openLink(item) }
+        }
+        Divider()
+        Button("Delete", role: .destructive) { panel.delete([item]) }
     }
 
     private var row: some View {
@@ -307,13 +380,19 @@ private struct ItemRow: View {
                 case .idea:
                     Button("Make issue") { panel.makeIssue(item) }.buttonStyle(.borderedProminent)
                     Button("Later") { panel.setStatus(item, .later) }
-                    Button("No") { panel.setStatus(item, .dismissed) }
+                    Button("Dismiss") { panel.setStatus(item, .dismissed) }
                 }
+                Spacer(minLength: 4)
                 if item.link != nil {
-                    Spacer(minLength: 4)
                     Button(item.status == .issue ? "View issue" : "View comment") { panel.openLink(item) }
                         .buttonStyle(.link)
                 }
+                Button { panel.delete([item]) } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Delete (⌘Z brings it back)")
             }
             .controlSize(.small)
             .disabled(panel.isBusy(item.id))

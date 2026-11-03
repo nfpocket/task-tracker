@@ -70,6 +70,23 @@ struct MenuSnapshotTests {
             }
         }
 
+        // Scrolled into a PR: its header stays pinned at the top.
+        let scrolledPanel = MenuPanel(actions: actions)
+        scrolledPanel.reload()
+        scrolledPanel.selectedID = "m2"
+        let scrolled = host(
+            MenuView(panel: scrolledPanel).frame(width: 420, height: 220).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 420, height: 220), dark: true
+        )
+        for _ in 0..<3 {
+            scrolled.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        }
+        let scrollView = try #require(Self.firstScrollView(in: scrolled))
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 160))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        try capture(scrolled, to: out.appending(path: "menu-scrolled-dark.png"))
+
         // The whole popover, switching tabs back and forth: the task list has to come back.
         let tasks = TaskStore(fileURL: directory.appending(path: "tasks.json"))
         tasks.add("Write the release notes\nPick a header image")
@@ -91,6 +108,14 @@ struct MenuSnapshotTests {
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentView = hosting
         return hosting
+    }
+
+    private static func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scrollView = view as? NSScrollView { return scrollView }
+        for subview in view.subviews {
+            if let found = firstScrollView(in: subview) { return found }
+        }
+        return nil
     }
 
     private func capture(_ hosting: NSView, to url: URL) throws {

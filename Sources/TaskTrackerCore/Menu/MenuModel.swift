@@ -73,6 +73,9 @@ public struct MenuItem: Codable, Identifiable, Equatable, Sendable {
         case location = "where"
     }
 
+    /// The number in the id: ids count up, so it orders items by when they were added.
+    public var number: Int { Int(id.dropFirst()) ?? 0 }
+
     /// The first web address in `location`; "localhost:3000" counts as http://localhost:3000.
     public var openURL: URL? {
         guard let location else { return nil }
@@ -107,6 +110,11 @@ public struct MenuPR: Codable, Identifiable, Equatable, Sendable {
     public var checkedAt: Date?
 
     public var id: String { "\(repo)#\(number)" }
+}
+
+public struct MenuRemoval: Equatable, Sendable {
+    public var items: [MenuItem]
+    public var prs: [MenuPR]
 }
 
 public struct MenuFile: Codable, Equatable, Sendable {
@@ -182,16 +190,34 @@ public struct MenuFile: Codable, Equatable, Sendable {
         let groups = order.map { key -> (pr: MenuPR, items: [MenuItem]) in
             let first = grouped[key]![0]
             let pr = self.pr(first.repo, first.pr) ?? MenuPR(repo: first.repo, number: first.pr)
-            // Checks before ideas, otherwise in the order the agent wrote them.
-            let sorted = grouped[key]!.enumerated().sorted { a, b in
-                if a.element.kind != b.element.kind { return a.element.kind == .check }
-                return a.offset < b.offset
-            }.map(\.element)
+            // Checks before ideas, otherwise in the order the agent wrote them (a restored item
+            // goes back to its place).
+            let sorted = grouped[key]!.sorted { a, b in
+                if a.kind != b.kind { return a.kind == .check }
+                return a.number < b.number
+            }
             return (pr, sorted)
         }
-        // Ids count up, so the highest one is the newest item, even within the same second.
-        func newest(_ items: [MenuItem]) -> Int { items.compactMap { Int($0.id.dropFirst()) }.max() ?? 0 }
-        return groups.sorted { newest($0.items) > newest($1.items) }
+        return groups.sorted { ($0.items.map(\.number).max() ?? 0) > ($1.items.map(\.number).max() ?? 0) }
+    }
+
+    /// Takes items off the menu for good, and a PR with nothing left on it. Unlike dismissing,
+    /// nothing is remembered: an agent may propose the same thing again.
+    public mutating func remove(_ ids: Set<String>) -> MenuRemoval {
+        let removed = items.filter { ids.contains($0.id) }
+        items.removeAll { ids.contains($0.id) }
+        let emptied = prs.filter { pr in
+            removed.contains { $0.repo == pr.repo && $0.pr == pr.number }
+                && !items.contains { $0.repo == pr.repo && $0.pr == pr.number }
+        }
+        prs.removeAll { emptied.contains($0) }
+        return MenuRemoval(items: removed, prs: emptied)
+    }
+
+    /// Puts back what `remove` took, under the same ids.
+    public mutating func restore(_ removal: MenuRemoval) {
+        for pr in removal.prs where self.pr(pr.repo, pr.number) == nil { prs.append(pr) }
+        for item in removal.items where self.item(item.id) == nil { items.append(item) }
     }
 
     public var openChecks: Int { items.filter { $0.kind == .check && $0.status == .open }.count }

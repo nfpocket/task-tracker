@@ -24,6 +24,8 @@ final class MenuPanel {
     }
 
     @ObservationIgnored let actions: MenuActions
+    /// The popover's: ⌘Z takes back a status change or a delete.
+    @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored private var watcher: DispatchSourceFileSystemObject?
     @ObservationIgnored private var messageTask: Task<Void, Never>?
 
@@ -115,12 +117,71 @@ final class MenuPanel {
 
     // MARK: - Deciding
 
+    /// Works, Later, Dismiss, back to open. Local, so it happens at once and ⌘Z takes it back.
     func setStatus(_ item: MenuItem, _ status: MenuItemStatus) {
-        run(item.id) { actions in
-            try actions.setStatus(item.id, to: status)
-            return nil
+        if selectedID == item.id {
+            selectedID = nil
+            reportingID = nil
         }
-        selectedID = nil
+        apply(status, to: item.id)
+    }
+
+    private func apply(_ status: MenuItemStatus, to id: String) {
+        guard let before = file.item(id)?.status, before != status else { return }
+        do {
+            try actions.setStatus(id, to: status)
+        } catch {
+            return flash(error.localizedDescription, isError: true)
+        }
+        reload()
+        registerUndo(Self.actionName(status)) { $0.apply(before, to: id) }
+    }
+
+    /// Takes items off the menu for good. ⌘Z puts them back.
+    func delete(_ items: [MenuItem]) {
+        let ids = items.map(\.id)
+        if let selectedID, ids.contains(selectedID) {
+            self.selectedID = nil
+            reportingID = nil
+        }
+        do {
+            let removal = try actions.delete(ids)
+            reload()
+            registerUndo(ids.count == 1 ? "Delete" : "Delete \(ids.count) Items") { $0.restore(removal) }
+            flash(ids.count == 1 ? "Deleted · ⌘Z to undo" : "Deleted \(ids.count) items · ⌘Z to undo", isError: false)
+        } catch {
+            flash(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func restore(_ removal: MenuRemoval) {
+        do {
+            try actions.restore(removal)
+            reload()
+            registerUndo(removal.items.count == 1 ? "Delete" : "Delete \(removal.items.count) Items") { panel in
+                panel.delete(removal.items)
+            }
+        } catch {
+            flash(error.localizedDescription, isError: true)
+        }
+    }
+
+    private func registerUndo(_ name: String, _ body: @escaping @MainActor (MenuPanel) -> Void) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { panel in
+            MainActor.assumeIsolated { body(panel) }
+        }
+        undoManager.setActionName(name)
+    }
+
+    private static func actionName(_ status: MenuItemStatus) -> String {
+        switch status {
+        case .works: "Works"
+        case .later: "Later"
+        case .dismissed: "Dismiss"
+        case .open: "Back to Open"
+        default: "Change"
+        }
     }
 
     func beginProblem(_ item: MenuItem) {

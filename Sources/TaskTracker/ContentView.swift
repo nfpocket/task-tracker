@@ -60,6 +60,7 @@ struct ContentView: View {
 
     private func didOpen() {
         store.undoManager = undoManager
+        menu.undoManager = undoManager
         outline.prepareForOpen()
         menu.didOpen()
         if tab == .tasks { addFieldFocused = true }
